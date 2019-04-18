@@ -1,0 +1,156 @@
+---
+title: "text-mining"
+author: "Adam Hendel"
+date: "April 17, 2019"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Introduction
+
+The report explores two approaches to document vectorization, which is the transformation of text sentences to numeric features. Namely, the Bag of Words approach and Paragraph Vector^1^.
+
+Both methods are popular and powerful text mining tools. However, there is no clear answer as to which method is optimal. One important difference between the two approaches is that the Paragraph Vector retains information as to the sequence of the words in a sentence. Consider the following two setnences:
+
+1) The quick brown fox jumped over the lazy dogs.
+
+2) The quick brown dogs jumped over the lazy fox.
+
+These two sentences contain the same words, but with the words dog and fox swapped. The sentences are describing different events. Under the Bag of Words model, these two sentences would result in precicely the same vector. Under Paragraph Vector, there will be different.
+
+Throughout the remainder of this report we will take a practical approach through applying both of these methods to a sample set of text data, discuss the methodology and review the results.
+
+# Dataset Description 
+
+The dataset is provided by Surya Kallumadi and Flex Grasser via the UCI Machine Learning Repository. It is a collection of roughly 215 thousand patient reviews of prescription drugs. The dataset is split into a 75%/25% train/test natively. Each patient review provides the name of the drug, the name of the condition, the raw text of the patient review, a numerical rating provided by the patient (10 point scale) along with the date and the number of users who found the review useful.
+
+For this analysis, we are focusing on the textual review and the numeric rating provided by the patient. First, let us inspect the distribution of the ratings. By viewing the frequency distribution, we can see that there are many 10 point reviews and less around a score of 5. 
+
+```{r, echo=F, warning=F, message=F}
+require(ggplot2)
+d <- read.csv('./drugsComTrain_raw.tsv', sep='\t')
+ggplot(d,aes(x=rating))+
+  geom_histogram() +
+  theme_minimal()
+
+
+```
+
+Let's put the ratings into two categories; excellent and standard. All ratings with a value of 8.0 and higher will be excellent, and the rest will be standard. We can use a word cloud to get a feel for the types of words associated with higher and lower reviews.
+
+```{r, echo=F, warning=F, message=F}
+require(wordcloud)
+require(tm) 
+require(dplyr)
+
+require(SnowballC) 
+
+require(gridExtra)
+
+high_corpus <- Corpus(VectorSource(d$review[d$rating>=8]))
+low_corpus  <- Corpus(VectorSource(d$review[d$rating<8]))
+
+high_clean <-high_corpus %>%
+  tm_map(removePunctuation) %>% 
+  tm_map(removeNumbers) %>%
+  tm_map(stripWhitespace) %>%
+  tm_map(removeWords, c(stopwords("english")))
+  
+low_clean <- low_corpus %>%
+  tm_map(removePunctuation) %>% 
+  tm_map(removeNumbers) %>%
+  tm_map(stripWhitespace) %>%
+  tm_map(removeWords, c(stopwords("english")))
+
+wordcloud(high_clean, max.words = 30, scale = c(2.5, 0.2))
+```
+
+Above we see the 30 most common words in the high ratings.
+
+Below is the same analysis for low ratings.
+
+
+```{r, echo=F, message=F, warning=F}
+wordcloud(low_clean, max.words = 30, scale = c(2.5, .5))
+
+```
+
+# Methodology 
+
+To explore these two vectorization methods, we will train models to predict whether the review is a standard rating (<8) or an excellent rating (>=8).
+
+#### Data Preparation
+
+Both of these approaches were tested using python implementations. 
+
+For the Bag of Words approach, the Scikit-Learn Count Vectorizer implementation was used. Prior to creating the word matrix, non-numeric characters, punctuations and stop words were removed. 
+
+The doc2vec implementation of Paragraph Vector in the Gensim package was also used. Punctuations were removed but stop words and numeric values were not.
+
+#### Model Fit
+
+The following four classification models were fit to both vectorization methods:
+
+- XGBoost (xgb)
+- Multilayer Perceptron (mlp)
+- Logistic Regression (lr)
+- Decision Tree (dt)
+
+The 75% training partition was used to train these models.
+
+#### Model Inference
+
+The 25% holdout set, for both Bag of Words and Paragraph Vector went through the same data preparation steps as previously mentioned. Each model was called on the unseen data.
+
+Implementation and hyperparameters can be found in the appendix.
+
+
+#### Results
+
+There are several options for evaluating model performance in classification problems. For example, precision, recall, area under curve, etc. Without a use-case, no single metric is better than another. Therefore, we will use the F1 score as a well-rounded indication of the model's ability to perform on new data.
+
+```{r}
+require(tidyr)
+results <- read.csv('./f1-score.csv')
+names(results) <- c('X','F1.Score')
+results <- results %>% separate(X, c('vec','model'), sep="([\\-])")
+results
+
+ggplot(results, aes(x=model, y = F1.Score, fill=vec)) +
+  geom_bar(stat='identity', width=.7, position = 'dodge') +
+  scale_fill_brewer('Vector Method',palette = 'Set1',
+                    labels=c('Paragraph Vector', 'Bag of Words')) +
+  theme_minimal()
+```
+
+Results were close in the decision tree and XGBoost models, but quite different in the multilayer perceptron and logistic regression. The Bag of Words approach did out perform Paragraph Vector in each of these model tests.
+
+However, there are significant limitations to these findings. Several are outlined below.
+
+Data Preparation:
+
+Both methods would benefit from experimentation with the inclusion/removal of stop words and numeric values. There is no guarantee that either method would result in improved results.
+
+The lengths of vectors used in this experiment was 20 for Paragraph Vector and 100 for Bag of Words. There is no relationship between the size of these vectors between models, but each can be treated as a hyperparameter to the modeling process. Thus, it would be wise to experiment with a wide range of vector lengths for both Bag of Words and Paragraph Vectors.
+
+Model Fitting:
+
+While the same model parameters were used for Bag of Words and Paragraph Vectors, these should be experimented with in the same fashion as the vector length noted above.
+
+References 
+
+
+
+
+## References
+
+1) Scikit Learn
+2) Gensim
+3) Word2vec paper/doc2vec paper
+4) Paragraph Vector https://arxiv.org/pdf/1405.4053v2.pdf
