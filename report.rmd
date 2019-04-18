@@ -3,8 +3,8 @@ title: "text-mining"
 author: "Adam Hendel"
 date: "April 17, 2019"
 output:
-  html_document: default
   word_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -14,7 +14,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Introduction
 
-The report explores two approaches to document vectorization, which is the transformation of text sentences to numeric features. Namely, the Bag of Words approach and Paragraph Vector^1^.
+The report explores two approaches to document vectorization, which is the transformation of text sentences to numeric features. Namely, the Bag of Words approach and Paragraph Vector (Q. Le, T. Mikolov 2014).
 
 Both methods are popular and powerful text mining tools. However, there is no clear answer as to which method is optimal. One important difference between the two approaches is that the Paragraph Vector retains information as to the sequence of the words in a sentence. Consider the following two setnences:
 
@@ -68,18 +68,24 @@ low_clean <- low_corpus %>%
   tm_map(stripWhitespace) %>%
   tm_map(removeWords, c(stopwords("english")))
 
-wordcloud(high_clean, max.words = 30, scale = c(2.5, 0.2))
+# wordcloud(high_clean, max.words = 30, scale = c(2.5, 0.2))
 ```
-
-Above we see the 30 most common words in the high ratings.
-
-Below is the same analysis for low ratings.
 
 
 ```{r, echo=F, message=F, warning=F}
-wordcloud(low_clean, max.words = 30, scale = c(2.5, .5))
+# grid.arrange(
+#   wordcloud(high_clean, max.words = 30, scale = c(2.5, 0.2)),
+#   wordcloud(low_clean, max.words = 30, scale = c(2.5, .5)),
+#   ncol=2
+# )
+wordcloud(high_clean, max.words = 30, scale = c(2.5, 0.2))
+wordcloud(low_clean, max.words = 30, scale = c(2.5, .45))
+# wordcloud(low_clean, max.words = 30, scale = c(2.5, .5))
 
 ```
+
+By glancing at the word clouds of the top 30 words, we can get a feel for the types of words that show up in the patient reviews. However, it is not obvious which words have a stronger association with lower reviews (right), or higher reviews (left).
+
 
 # Methodology 
 
@@ -91,7 +97,7 @@ Both of these approaches were tested using python implementations.
 
 For the Bag of Words approach, the Scikit-Learn Count Vectorizer implementation was used. Prior to creating the word matrix, non-numeric characters, punctuations and stop words were removed. 
 
-The doc2vec implementation of Paragraph Vector in the Gensim package was also used. Punctuations were removed but stop words and numeric values were not.
+The doc2vec implementation of Paragraph Vector in the Gensim package (Rehurek, R., & Sojka, P. 2010) was also used. Punctuations were removed but stop words and numeric values were not.
 
 #### Model Fit
 
@@ -115,7 +121,7 @@ Implementation and hyperparameters can be found in the appendix.
 
 There are several options for evaluating model performance in classification problems. For example, precision, recall, area under curve, etc. Without a use-case, no single metric is better than another. Therefore, we will use the F1 score as a well-rounded indication of the model's ability to perform on new data.
 
-```{r}
+```{r, echo=F, message=F, warning=F}
 require(tidyr)
 results <- read.csv('./f1-score.csv')
 names(results) <- c('X','F1.Score')
@@ -143,14 +149,166 @@ Model Fitting:
 
 While the same model parameters were used for Bag of Words and Paragraph Vectors, these should be experimented with in the same fashion as the vector length noted above.
 
-References 
+# References
+
+Pedregosa et al. (2011), Scikit-learn: Machine Learning in Python, JMLR 12, pp. 2825-2830.
+
+Q. Le, T. Mikolov. (2014). Distributed Represenations of Sentences and Documents. In Proceedings of ICML.
+
+Rehurek, R., & Sojka, P. (2010). Software framework for topic modelling with large corpora. LREC.
 
 
+# Appendix
+```
+# coding: utf-8
 
+# Source: https://archive.ics.uci.edu/ml/datasets/Drug+Review+Dataset+%28Drugs.com%29
 
-## References
+import pandas as pd
 
-1) Scikit Learn
-2) Gensim
-3) Word2vec paper/doc2vec paper
-4) Paragraph Vector https://arxiv.org/pdf/1405.4053v2.pdf
+# load data
+raw_train = pd.read_csv('./drugsComTrain_raw.tsv', sep='\t')
+raw_test = pd.read_csv('./drugsComTest_raw.tsv', sep='\t')
+print(raw_train.shape)
+print(raw_test.shape)
+
+# combine the to for .csv requirement in assignment
+raw_train['cat'] = 'TRAIN'
+raw_test['cat'] = 'TEST'
+csv = pd.concat([raw_train, raw_test], axis=0)
+csv\
+    .to_csv('text-mining-data.csv')
+
+# drop empty descriptions
+raw_train=raw_train[[len(x)>1 for x in raw_train['review']]]
+raw_test=raw_test[[len(x)>1 for x in raw_test['review']]]
+
+raw_train['rating'].hist()
+
+raw_train['outcome'] = [1 if x > 8 else 0 for x in raw_train['rating'] ]
+raw_test['outcome'] = [1 if x > 8 else 0 for x in raw_test['rating'] ]
+
+from gensim.test.utils import common_texts
+from gensim.models.doc2vec import Doc2Vec, TaggedDocument
+import pandas as pd
+import numpy as np
+import multiprocessing, os, json
+cores = multiprocessing.cpu_count()
+
+documents = [TaggedDocument(doc, [i]) for i, doc in enumerate(common_texts)]
+model_rev = Doc2Vec(
+    documents, 
+    vector_size=20, 
+    window=2, 
+    min_count=1, 
+    workers=cores)
+
+def d2v(reviews):
+    '''reviews should be a list of strings'''
+    import re
+    # lets only remove punctuations - stop words and numbers are relevant
+    revs = [re.sub('[^A-Za-z0-9]+', ' ', x) for x in reviews]
+    embed = [model_rev.infer_vector(list(str(x))) for x in revs]
+    return pd.DataFrame(embed)
+
+embed_train = d2v(raw_train['review'])
+embed_test = d2v(raw_test['review'])
+
+embed_train['outcome'] = raw_train['outcome']
+embed_test['outcome'] = raw_test['outcome']
+
+from xgboost import XGBClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.neural_network import MLPClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.tree import DecisionTreeClassifier
+
+models = {
+    'd2v-xgb' : XGBClassifier(max_depth=14, min_child_weight=0.1, gamma=1.5,nthread=-1),
+    'd2v-lr'  : LogisticRegression(solver='lbfgs', multi_class='ovr'),
+    'd2v-mlp' : MLPClassifier(hidden_layer_sizes=(100,50)),
+    #'knn' : KNeighborsClassifier(n_neighbors=4), # takes too long for inference
+    'd2v-dt'  : DecisionTreeClassifier(min_samples_split=2)
+}
+
+# train bag of models
+for model_name, model in models.items():
+    print('Fitting {}'.format(model_name))
+    model.fit(
+        embed_train.drop('outcome',axis=1).values,
+        embed_train['outcome'])
+
+# infer w/ each model
+results = {'ACTUAL' : embed_test['outcome'].reset_index(drop=True)}
+for model_name, model in models.items():
+    print('Predicting: {}'.format(model_name))
+    results[model_name] = model.predict(embed_test.drop('outcome',axis=1).values)
+
+from sklearn.metrics import classification_report
+for model_name, model in models.items():
+    print("Performance Metrics for: {}".format(model_name))
+    print(classification_report(results['ACTUAL'], results[model_name]))
+    print("-----------------")
+
+# # Word Vectorizer
+
+from sklearn.feature_extraction.text import CountVectorizer
+from gensim.parsing.preprocessing import remove_stopwords
+def clean(review):
+    import re
+    # keep only alphas
+    revs = [re.sub('[^A-Za-z]+', ' ', x) for x in review]
+    cleaned = [remove_stopwords(x) for x in revs]
+    return cleaned
+
+raw_test['cleaned'] = clean(raw_test['review'])
+raw_train['cleaned'] = clean(raw_train['review'])
+
+test_vec = pd.DataFrame(
+    CountVectorizer(max_features=100)\
+    .fit_transform(raw_test['cleaned'])\
+    .toarray()
+    )
+train_vec = pd.DataFrame(
+    CountVectorizer(max_features=100)\
+    .fit_transform(raw_train['cleaned'])\
+    .toarray()
+    )
+
+test_vec['outcome'] = raw_test['outcome']
+train_vec['outcome'] = raw_train['outcome']
+
+models = {
+    'vec-xgb' : XGBClassifier(max_depth=14, min_child_weight=0.1, gamma=1.5,nthread=-1),
+    'vec-lr'  : LogisticRegression(solver='lbfgs', multi_class='ovr'),
+    'vec-mlp' : MLPClassifier(hidden_layer_sizes=(100,50)),
+    'vec-dt'  : DecisionTreeClassifier(min_samples_split=2)
+}
+for model_name, model in models.items():
+    print('Fitting {}'.format(model_name))
+    model.fit(
+        train_vec.drop('outcome',axis=1).values,
+        train_vec['outcome'])
+# infer w/ each model
+# append count vec results to d2v results
+for model_name, model in models.items():
+    print('Predicting: {}'.format(model_name))
+    results[model_name] = model.predict(test_vec.drop('outcome',axis=1).values)
+
+# compute f1-score for all models
+from sklearn.metrics import f1_score
+mods = list(results.keys())
+mods.remove('ACTUAL')
+metrics = {}
+for mod in mods:
+    f1 = f1_score(results['ACTUAL'], results[mod])
+    metrics[mod] = round(f1, 3)
+
+pd.DataFrame\
+    .from_dict(metrics, orient='index')\
+    .to_csv('f1-score.csv', index=True)
+
+pd.DataFrame(results)\
+    .to_csv('pred.csv', index=None)
+
+```
